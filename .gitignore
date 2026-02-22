@@ -1,0 +1,12 @@
+env
+__pycache__
+*.png
+*.geojson
+*.html
+*.tgz
+kirim.py
+live.ini
+wiki.json
+kabupaten.csv
+kecamatan.csv
+kelurahan.csv

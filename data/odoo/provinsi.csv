@@ -1,0 +1,39 @@
+"id","country_id:id","name","code","source_key"
+state_id_ac,id,"Aceh","AC",11
+state_id_ba,id,"Bali","BA",51
+state_id_bb,id,"Bangka Belitung","BB",19
+state_id_bt,id,"Banten","BT",36
+state_id_be,id,"Bengkulu","BE",17
+state_id_go,id,"Gorontalo","GO",75
+state_id_jk,id,"Jakarta","JK",31
+state_id_ja,id,"Jambi","JA",15
+state_id_jb,id,"Jawa Barat","JB",32
+state_id_jt,id,"Jawa Tengah","JT",33
+state_id_ji,id,"Jawa Timur","JI",35
+state_id_kb,id,"Kalimantan Barat","KB",61
+state_id_ks,id,"Kalimantan Selatan","KS",63
+state_id_kt,id,"Kalimantan Tengah","KT",62
+state_id_ki,id,"Kalimantan Timur","KI",64
+state_id_ku,id,"Kalimantan Utara","KU",65
+state_id_kr,id,"Kepulauan Riau","KR",21
+state_id_la,id,"Lampung","LA",18
+state_id_ma,id,"Maluku","MA",81
+state_id_mu,id,"Maluku Utara","MU",82
+state_id_nb,id,"Nusa Tenggara Barat","NB",52
+state_id_nt,id,"Nusa Tenggara Timur","NT",53
+state_id_pa,id,"Papua","PA",91
+state_id_pb,id,"Papua Barat","PB",92
+state_id_pd,id,"Papua Barat Daya","PD",96
+state_id_ps,id,"Papua Selatan","PS",93
+state_id_pt,id,"Papua Tengah","PT",94
+state_id_pe,id,"Papua Pegunungan","PE",95
+state_id_ri,id,"Riau","RI",14
+state_id_sr,id,"Sulawesi Barat","SR",76
+state_id_sn,id,"Sulawesi Selatan","SN",73
+state_id_st,id,"Sulawesi Tengah","ST",72
+state_id_sg,id,"Sulawesi Tenggara","SG",74
+state_id_sa,id,"Sulawesi Utara","SA",71
+state_id_sb,id,"Sumatra Barat","SB",13
+state_id_ss,id,"Sumatra Selatan","SS",16
+state_id_su,id,"Sumatra Utara","SU",12
+state_id_yo,id,"Yogyakarta","YO",34
