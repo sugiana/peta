@@ -15,7 +15,7 @@ def main(argv=sys.argv[1:]):
     conf = ConfigParser()
     conf.read(conf_file)
     cf = dict(conf.items('main'))
-    engine, db_session = create_session(cf, 'target.')
+    engine, db_session = create_session(cf, 'sqlalchemy.')
     provinsi = dict()
     with open(MAPPING_FILE) as f:
         c = csv.DictReader(f)

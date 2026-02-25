@@ -1,32 +1,42 @@
 import sys
 import os
 import csv
+import re
 from configparser import ConfigParser
 from time import time
-from sqlalchemy import (
-    func,
-    select,
-    text,
-    )
 from zope.sqlalchemy import register
 import transaction
+from roman import (
+    fromRoman,
+    InvalidRomanNumeralError,
+    )
 from models import (
     Base,
     TingkatWilayah,
     JenisWilayah,
     Wilayah,
     )
-from source_models import Wilayah as SourceWilayah
-from common import create_session
+from common import (
+    create_session,
+    format_wilayah,
+    )
+from scraper import (
+    get_provinsi,
+    get_kabupaten,
+    get_kecamatan,
+    get_desa,
+    )
 
 
 registry = dict()
 
+REGEX_NAMA = r"[^a-zA-Z0-9'\-\ ]"
+VOWELS = "aeiouAEIOU"
+
 JENIS_WILAYAH = {
-    'Daerah Khusus Ibukota': 11,
-    'Daerah Istimewa': 12,
-    'Kabupaten': 20,
-    'Kota': 21,
+    'DKI': 11,
+    'DAERAH ISTIMEWA': 12,
+    'KOTA': 21,
     'Kota Administrasi': 21,
     }
 
@@ -42,6 +52,13 @@ with open(filename) as f:
     for row in c:
         KELURAHAN_LIST.append(row['key'])
 
+NAMA = dict()
+filename = os.path.join('data', 'nama.csv')
+with open(filename) as f:
+    c = csv.DictReader(f)
+    for row in c:
+        NAMA[row['key']] = row['nama']
+
 
 def humanize_time(secs):
     mins, secs = divmod(secs, 60)
@@ -56,7 +73,7 @@ def get_file(filename):
 
 
 def append_csv(table, filename, keys):
-    target_session = registry['target_session']
+    db_session = registry['db_session']
     with get_file(filename) as f:
         reader = csv.DictReader(f)
         filter_ = dict()
@@ -64,7 +81,7 @@ def append_csv(table, filename, keys):
             for key in keys:
                 val = cf[key] or None
                 filter_[key] = val
-            q = target_session.query(table).filter_by(**filter_)
+            q = db_session.query(table).filter_by(**filter_)
             found = q.first()
             if found:
                 continue
@@ -74,7 +91,7 @@ def append_csv(table, filename, keys):
                 if not val:
                     continue
                 setattr(row, fieldname, val)
-            target_session.add(row)
+            db_session.add(row)
 
 
 '''
@@ -91,7 +108,7 @@ Kelurahan:
 '''
 
 
-def repair_row(row):
+def perbaiki_jenis(row):
     row.nama = row.nama.strip()
     if row.jenis_id <= DEFAULT_KABUPATEN:  # Provinsi / Kabupaten / Kota
         for prefix in JENIS_WILAYAH:
@@ -106,19 +123,50 @@ def repair_row(row):
             if row.key.find(prefix) == 0:
                 row.jenis_id = JENIS_KELURAHAN
                 return
-        target_session = registry['target_session']
+        db_session = registry['db_session']
         kabupaten_key = row.key[:5]
-        q = target_session.query(Wilayah).filter_by(key=kabupaten_key)
+        q = db_session.query(Wilayah).filter_by(key=kabupaten_key)
         kabupaten = q.first()
         if kabupaten.jenis_id > DEFAULT_KABUPATEN:  # Kota ?
             row.jenis_id = JENIS_KELURAHAN
 
 
-def get_count():
-    sql = select(func.count()).select_from(SourceWilayah.__table__)
-    with registry['source_engine'].connect() as conn:
-        q = conn.execute(sql)
-    return q.scalar()
+def perbaiki_nama(row):
+    if row.key in NAMA:
+        row.nama = NAMA[row.key]
+        return
+    row.nama = row.nama.rstrip('.')
+    row.nama = row.nama.replace('KAB.', 'Kabupaten')
+    row.nama = row.nama.replace('ADM.', 'Administrasi')
+    row.nama = row.nama.replace('KEP.', 'Kepulauan')
+    row.nama = row.nama.replace('"', "'")
+    karakter_aneh = re.findall(REGEX_NAMA, row.nama)
+    if karakter_aneh:
+        db_session = registry['db_session']
+        parent_key = '.'.join(row.key.split('.')[:-1])
+        q = db_session.query(Wilayah).filter_by(key=parent_key)
+        parent = q.first()
+        # Agar mudah copas ke Google
+        kecamatan = parent.nama_lengkap.split(',')[0]
+        print(f'Key:{row.key}; Google:{row.nama.title()}, {kecamatan}')
+        # Agar mudah copas ke data/nama.csv
+        print('Salin ke data/nama.csv untuk diperbaiki:')
+        print(f'{row.key},{row.nama.title()}')
+        raise Exception(
+            f'{row.key},{row.nama.title()}, {parent.nama_lengkap} '
+            'ada karakter aneh')
+    row.nama = format_wilayah(row.nama)
+    kata_list = []
+    for kata in row.nama.split():
+        if 1 < len(kata) < 5:
+            try:
+                fromRoman(kata)
+                kata_list.append(kata.upper())
+                continue
+            except InvalidRomanNumeralError:
+                pass
+        kata_list.append(kata.capitalize())
+    row.nama = ' '.join(kata_list)
 
 
 def show_progress(begin_time, count, real_count, no, real_no, source):
@@ -130,46 +178,24 @@ def show_progress(begin_time, count, real_count, no, real_no, source):
     print(f'#{no}/{count} {source.kode} {source.nama} estimate {estimate}')
 
 
-def restore_from_source():
-    target_session = registry['target_session']
-    source_session = registry['source_session']
-    count = get_count()
-    q_source = source_session.query(SourceWilayah)
-    if sys.argv[2:]:
-        offset = int(sys.argv[2]) - 2
-        real_count = count - offset - 1
-    else:
-        offset = -1
-        real_count = count
-    real_no = 0
-    begin_time = time()
-    while True:
-        offset += 1
-        source = q_source.order_by(SourceWilayah.kode).offset(offset).first()
-        if not source:
-            break
-        real_no += 1
-        no = offset + 1
-        nama = source.nama
-        t = source.kode.split('.')
-        jenis_id = len(t) * 10
-        if jenis_id == 10:
-            parent = None
-        else:
-            q = target_session.query(Wilayah).filter_by(key='.'.join(t[:-1]))
-            parent = q.first()
-        q = target_session.query(Wilayah).filter_by(key=source.kode)
-        row = q.first()
-        with transaction.manager:
-            if not row:
-                row = Wilayah(key=source.kode)
-            row.nama = nama
-            row.jenis_id = jenis_id
-            if parent:
-                row.wilayah_id = parent.id
-            repair_row(row)
-            row.save(target_session)
-        show_progress(begin_time, count, real_count, no, real_no, source)
+def get_jenis_id(key):
+    t = key.split('.')
+    return len(t) * 10
+
+
+def save(db_session, key, nama):
+    jenis_id = get_jenis_id(key)
+    d = dict(key=key, nama=nama, jenis_id=jenis_id)
+    row = Wilayah(**d)
+    if jenis_id != 10:  # Bukan provinsi ?
+        t = key.split('.')
+        q = db_session.query(Wilayah).filter_by(key='.'.join(t[:-1]))
+        parent = q.first()
+        row.wilayah_id = parent.id
+    perbaiki_jenis(row)
+    perbaiki_nama(row)
+    print(key, row.nama)
+    row.save(db_session)
 
 
 def main(argv=sys.argv[1:]):
@@ -177,17 +203,51 @@ def main(argv=sys.argv[1:]):
     conf = ConfigParser()
     conf.read(conf_file)
     cf = dict(conf.items('main'))
-    target_engine, target_session = create_session(cf, 'target.')
-    source_engine, source_session = create_session(cf, 'source.')
-    registry['source_engine'] = source_engine
-    registry['target_session'] = target_session
-    registry['source_session'] = source_session
-    register(target_session)
-    Base.metadata.create_all(target_engine)
+    engine, db_session = create_session(cf, 'sqlalchemy.')
+    registry['db_session'] = db_session
+    register(db_session)
+    Base.metadata.create_all(engine)
     with transaction.manager:
         append_csv(TingkatWilayah, 'tingkat_wilayah.csv', ['nama'])
         append_csv(JenisWilayah, 'jenis_wilayah.csv', ['nama'])
-    restore_from_source()
+    base_q = db_session.query(Wilayah)
+    if not base_q.first():  # Sudah ada provinsi ?
+        d_prov = get_provinsi()
+        with transaction.manager:
+            for key, nama in d_prov.items():
+                save(db_session, key, nama)
+    q = base_q.filter_by(tingkat_id=1)
+    q = q.order_by(Wilayah.key)
+    for prov in q:
+        q_kab = base_q.filter_by(wilayah_id=prov.id)
+        if q_kab.first():  # Sudah ada kabupaten ?
+            continue
+        d = get_kabupaten(prov.key)
+        with transaction.manager:
+            for key, nama in d.items():
+                save(db_session, key, nama)
+    q = base_q.filter_by(tingkat_id=2)
+    q = q.order_by(Wilayah.key)
+    for kab in q:
+        q_kec = base_q.filter_by(wilayah_id=kab.id)
+        if q_kec.first():  # Sudah ada kecamatan ?
+            continue
+        kode_prov, kode_kab = kab.key.split('.')
+        d = get_kecamatan(kode_prov, kode_kab)
+        with transaction.manager:
+            for key, nama in d.items():
+                save(db_session, key, nama)
+    q = base_q.filter_by(tingkat_id=3)
+    q = q.order_by(Wilayah.key)
+    for kec in q:
+        q_desa = base_q.filter_by(wilayah_id=kec.id)
+        if q_desa.first():  # Sudah ada desa ?
+            continue
+        kode_prov, kode_kab, kode_kec = kec.key.split('.')
+        d = get_desa(kode_prov, kode_kab, kode_kec)
+        with transaction.manager:
+            for key, nama in d.items():
+                save(db_session, key, nama)
 
 
 if __name__ == '__main__':

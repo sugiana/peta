@@ -2,6 +2,7 @@ env
 __pycache__
 *.png
 *.geojson
+*.json
 *.html
 *.tgz
 kirim.py
@@ -10,3 +11,5 @@ wiki.json
 kabupaten.csv
 kecamatan.csv
 kelurahan.csv
+tmp
+chrome-profile

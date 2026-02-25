@@ -29,7 +29,7 @@ def main():
     conf.read(conf_file)
     cf = dict(conf.items('main'))
 
-    engine = engine_from_config(cf, 'target.')
+    engine = engine_from_config(cf, 'sqlalchemy.')
     factory = sessionmaker(bind=engine)
     db_session = factory()
 
