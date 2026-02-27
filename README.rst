@@ -33,16 +33,20 @@ Buat salinan file konfigurasi::
 
     cp wilayah.ini live.ini
 
-Sesuaikan ``live.ini``. Jalankan proses unduh kode dan nama wilayah dari situs
-Dukcapil::
+Sesuaikan ``live.ini``. Jalankan proses unduh kode, nama, batas wilayah, dan
+statistik dari situs Dukcapil::
 
     ~/env/bin/python init_db.py live.ini
 
-Selanjutnya menyimpan multi polygon desa di field ``batas``::
+Ini butuh waktu 24 jam.
 
-    ~/env/bin/python batas.py live.ini
+Jika sudah selesai maka yang paling lengkap datanya adalah wilayah tingkat 4
+yaitu desa. Sedangkan di atasnya seperti kecamatan, kabupaten, dan provinsi
+field ``batas`` dan ``data`` masih kosong. Isi untuk kecamatan tentu gabungan
+dari desa-desanya. Isi untuk kabupaten merupakan gabungan dari kecamatannya.
+Begitu juga dengan provinsi merupakan gabungan kabupatennya.
 
-Adapun batas wilayah untuk tingkat di atasnya diperlukan SQL function::
+Untuk mengisinya dibutuhkan SQL function::
 
     psql indonesia -f sql/func_gabung.sql
 
@@ -64,19 +68,19 @@ Ketiganya ada di file ``sql/gabung.sql``.
 Desa menjadi Kelurahan
 ----------------------
 
-Script ``init_db.py`` secara default akan mengawali field ``nama_lengkap``
-untuk **daerah tingkat 4** (desa / kelurahan) dengan ketentuan berikut:
+Script ``init_db.py`` mengisi field ``nama_lengkap`` untuk **daerah tingkat 4**
+(desa / kelurahan) dengan ketentuan berikut:
 
 1. Bila terdaftar di ``data/desa_jadi_kelurahan.csv`` maka berawalan
    ``Kelurahan``, contoh:
 
-    field ``key`` = ``32.01.13.1007`` nama lengkap sebelumnya:
+   field ``key`` = ``32.01.13.1007`` nama lengkap sebelumnya:
 
-    ``Desa Pabuaran, Bojonggede, Kabupaten Bogor, Jawa Barat``
+   ``Desa Pabuaran, Bojonggede, Kabupaten Bogor, Jawa Barat``
 
-    menjadi
+   menjadi
 
-    ``Kelurahan Pabuaran, Bojonggede, Kabupaten Bogor, Jawa Barat``
+   ``Kelurahan Pabuaran, Bojonggede, Kabupaten Bogor, Jawa Barat``
 
 2. Bila daerah tingkat 2 (kabupaten / kota) berawalan ``Kota`` maka daerah
    tingkat 4-nya berawalan ``Kelurahan``.

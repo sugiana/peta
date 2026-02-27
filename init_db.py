@@ -6,6 +6,8 @@ from configparser import ConfigParser
 from time import time
 from zope.sqlalchemy import register
 import transaction
+from geoalchemy2 import WKTElement
+from shapely.geometry import shape
 from roman import (
     fromRoman,
     InvalidRomanNumeralError,
@@ -146,9 +148,9 @@ def perbaiki_nama(row):
         parent_key = '.'.join(row.key.split('.')[:-1])
         q = db_session.query(Wilayah).filter_by(key=parent_key)
         parent = q.first()
-        # Agar mudah copas ke Google
+        # Agar mudah copas ke mesin pencari
         kecamatan = parent.nama_lengkap.split(',')[0]
-        print(f'Key:{row.key}; Google:{row.nama.title()}, {kecamatan}')
+        print(f'Key:{row.key}; Cari:wiki {row.nama.title()}, {kecamatan}')
         # Agar mudah copas ke data/nama.csv
         print('Salin ke data/nama.csv untuk diperbaiki:')
         print(f'{row.key},{row.nama.title()}')
@@ -183,9 +185,26 @@ def get_jenis_id(key):
     return len(t) * 10
 
 
-def save(db_session, key, nama):
+def wkt_from_geojson(geom):
+    """Convert GeoJSON geometry to WKT for PostGIS."""
+    shapely_geom = shape(geom)
+    return WKTElement(shapely_geom.wkt, srid=4326)
+
+
+def to_db_geometry(geom):
+    d = {"type": "MultiPolygon", "coordinates": [geom]}
+    return wkt_from_geojson(d)
+
+
+def save(db_session, key: str, info):
     jenis_id = get_jenis_id(key)
-    d = dict(key=key, nama=nama, jenis_id=jenis_id)
+    d = dict(key=key, jenis_id=jenis_id)
+    if isinstance(info, str):  # provinsi, kabupaten, kecamatan
+        d['nama'] = info
+    else:  # desa
+        d['nama'] = info['name']
+        d['batas'] = to_db_geometry(info['geometry'])
+        d['data'] = info['properties']
     row = Wilayah(**d)
     if jenis_id != 10:  # Bukan provinsi ?
         t = key.split('.')
@@ -246,8 +265,8 @@ def main(argv=sys.argv[1:]):
         kode_prov, kode_kab, kode_kec = kec.key.split('.')
         d = get_desa(kode_prov, kode_kab, kode_kec)
         with transaction.manager:
-            for key, nama in d.items():
-                save(db_session, key, nama)
+            for key, info in d.items():
+                save(db_session, key, info)
 
 
 if __name__ == '__main__':

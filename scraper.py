@@ -88,7 +88,7 @@ def get_kecamatan(kode_prov: int, kode_kab: int) -> dict:
     return dict(d)
 
 
-def get_desa(kode_prov: int, kode_kab: int, kode_kec: int) -> dict:
+def get_nama_desa(kode_prov: int, kode_kab: int, kode_kec: int) -> dict:
     where_clause = (
         f"no_prop={kode_prov} AND "
         f"no_kab={kode_kab} AND "
@@ -140,6 +140,38 @@ def get_info(
     return dict(
             properties=f['attributes'],
             geometry=f['geometry']['rings'])
+
+
+def get_desa(kode_prov: int, kode_kab: int, kode_kec: int) -> dict:
+    where_clause = (
+        f"no_prop={kode_prov} AND "
+        f"no_kab={kode_kab} AND "
+        f"no_kec={kode_kec}")
+    params = {
+        "where": where_clause,
+        "outFields": "*",
+        "f": "json",
+        "returnGeometry": "true",
+        "outSR": "4326"
+    }
+    response = requests.get(URL, params=params, headers=HEADERS, timeout=30)
+    response.raise_for_status()
+    data = response.json()
+    if not data.get("features"):
+        raise Exception("Tidak ditemukan data untuk wilayah tersebut.")
+    d = dict()
+    for feature in data["features"]:
+        key = '.'.join([
+            str(feature["attributes"]["no_prop"]),
+            str(feature["attributes"]["no_kab"]).zfill(2),
+            str(feature["attributes"]["no_kec"]).zfill(2),
+            str(feature["attributes"]["no_kel"]).zfill(2)])
+        name = feature["attributes"]["nama_kel"]
+        d[key] = dict(
+            name=name,
+            properties=feature['attributes'],
+            geometry=feature['geometry']['rings'])
+    return d
 
 
 def to_geojson(data: dict):
