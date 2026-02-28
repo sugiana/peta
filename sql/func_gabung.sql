@@ -18,24 +18,49 @@ AS $$
 -- Isi dengan gabungan batas wilayah-wilayah di bawahnya.
 DECLARE
     rec record;
+    rec_data record;
     geom geometry;
 BEGIN
-    SELECT id, nama, tingkat_id
+    SELECT id, nama
         INTO rec 
         FROM wilayah
         WHERE key = p_key;
 
-    SELECT tutup_lubang(ST_UnaryUnion(ST_Collect(ST_MakeValid(batas))))
-        INTO geom
+    SELECT tutup_lubang(ST_UnaryUnion(ST_Collect(ST_MakeValid(batas)))) AS geom,
+        sum(data['pria']::int) AS pria,
+        sum(data['wanita']::int) AS wanita,
+        sum(data['jumlah_penduduk']::int) AS jumlah_penduduk,
+        sum(data['jumlah_kk']::int) AS jumlah_kk,
+        sum(data['kawin']::int) AS kawin,
+        sum(data['belum_kawin']::int) AS belum_kawin,
+        sum(data['islam']::int) AS islam, 
+        sum(data['kristen']::int) AS kristen, 
+        sum(data['katholik']::int) AS katholik, 
+        sum(data['hindu']::int) AS hindu,
+        sum(data['budha']::int) AS budha,
+        sum(data['konghucu']::int) AS konghucu 
+        INTO rec_data 
         FROM wilayah
-        WHERE wilayah_id = rec.id
-          AND batas IS NOT NULL;
+        WHERE wilayah_id = rec.id;
 
-    IF geom IS NOT NULL THEN
+    IF rec_data.geom IS NOT NULL THEN
         UPDATE wilayah
-            SET batas = geom
+            SET batas = rec_data.geom,
+                data = jsonb_build_object(
+                    'pria', rec_data.pria,
+                    'wanita', rec_data.wanita,
+                    'jumlah_penduduk', rec_data.jumlah_penduduk,
+                    'jumlah_kk', rec_data.jumlah_kk,
+                    'kawin', rec_data.kawin,
+                    'belum_kawin', rec_data.belum_kawin,
+                    'islam', rec_data.islam,
+                    'kristen', rec_data.kristen,
+                    'katholik', rec_data.katholik,
+                    'hindu', rec_data.hindu,
+                    'budha', rec_data.budha,
+                    'konghucu', rec_data.konghucu)
             WHERE key = p_key;
-        RAISE NOTICE '% % kini memiliki batas wilayah', p_key, rec.nama;
+        RAISE NOTICE '% % kini memiliki batas wilayah dan statistik', p_key, rec.nama;
     ELSE
         RAISE NOTICE '% % tidak ada batas wilayah di bawahnya', p_key, rec.nama;
     END IF;
@@ -73,10 +98,9 @@ LANGUAGE plpgsql AS $$
 DECLARE
     rec record;
     rec_child record;
-    -- geom geometry;
     rec_data record;
 BEGIN
-    SELECT id, nama, tingkat_id
+    SELECT id, tingkat_id
         INTO rec 
         FROM wilayah
         WHERE key = p_key;
@@ -92,43 +116,5 @@ BEGIN
         END LOOP;
     END IF;
 
-    SELECT tutup_lubang(ST_UnaryUnion(ST_Collect(ST_MakeValid(batas)))) AS geom,
-        sum(data['pria']::int) AS pria,
-        sum(data['wanita']::int) AS wanita,
-        sum(data['jumlah_penduduk']::int) AS jumlah_penduduk,
-        sum(data['jumlah_kk']::int) AS jumlah_kk,
-        sum(data['kawin']::int) AS kawin,
-        sum(data['belum_kawin']::int) AS belum_kawin,
-        sum(data['islam']::int) AS islam, 
-        sum(data['kristen']::int) AS kristen, 
-        sum(data['katholik']::int) AS katholik, 
-        sum(data['hindu']::int) AS hindu,
-        sum(data['budha']::int) AS budha,
-        sum(data['konghucu']::int) AS konghucu 
-        INTO rec_data 
-        FROM wilayah
-        WHERE wilayah_id = rec.id
-          AND batas IS NOT NULL;
-
-    IF rec_data.geom IS NOT NULL THEN
-        UPDATE wilayah
-            SET batas = rec_data.geom,
-                data = jsonb_build_object(
-                    'pria', rec_data.pria,
-                    'wanita', rec_data.wanita,
-                    'jumlah_penduduk', rec_data.jumlah_penduduk,
-                    'jumlah_kk', rec_data.jumlah_kk,
-                    'kawin', rec_data.kawin,
-                    'belum_kawin', rec_data.belum_kawin,
-                    'islam', rec_data.islam,
-                    'kristen', rec_data.kristen,
-                    'katholik', rec_data.katholik,
-                    'hindu', rec_data.hindu,
-                    'budha', rec_data.budha,
-                    'konghucu', rec_data.konghucu)
-            WHERE key = p_key;
-        RAISE NOTICE '% % kini memiliki batas wilayah', p_key, rec.nama;
-    ELSE
-        RAISE NOTICE '% % tidak ada batas wilayah di bawahnya', p_key, rec.nama;
-    END IF;
+    EXECUTE gabung(p_key);
 END $$;
