@@ -2,9 +2,12 @@ import sys
 import os
 import csv
 import re
+import json
 from configparser import ConfigParser
 from argparse import ArgumentParser
 from time import time
+from glob import glob
+from camelot import read_pdf
 from sqlalchemy import (
     func,
     select,
@@ -22,11 +25,11 @@ from models import (
     JenisWilayah,
     Wilayah,
     )
-from source_models import Wilayah as SourceWilayah
 from common import (
     create_session,
     format_wilayah,
     )
+from json_wilayah import get_info
 
 
 registry = dict()
@@ -45,12 +48,14 @@ DEFAULT_KABUPATEN = 20
 DEFAULT_DESA = 40
 JENIS_KELURAHAN = 41
 
-KELURAHAN_LIST = []
-filename = os.path.join('data', 'desa_jadi_kelurahan.csv')
+
+JENIS = dict()
+filename = os.path.join('data', 'jenis_wilayah.csv')
 with open(filename) as f:
     c = csv.DictReader(f)
     for row in c:
-        KELURAHAN_LIST.append(row['key'])
+        JENIS[row['nama']] = row['id']
+
 
 NAMA = dict()
 filename = os.path.join('data', 'nama.csv')
@@ -73,7 +78,7 @@ def get_file(filename):
 
 
 def append_csv(table, filename, keys):
-    target_session = registry['target_session']
+    db_session = registry['db_session']
     with get_file(filename) as f:
         reader = csv.DictReader(f)
         filter_ = dict()
@@ -81,7 +86,7 @@ def append_csv(table, filename, keys):
             for key in keys:
                 val = cf[key] or None
                 filter_[key] = val
-            q = target_session.query(table).filter_by(**filter_)
+            q = db_session.query(table).filter_by(**filter_)
             found = q.first()
             if found:
                 continue
@@ -91,12 +96,12 @@ def append_csv(table, filename, keys):
                 if not val:
                     continue
                 setattr(row, fieldname, val)
-            target_session.add(row)
+            db_session.add(row)
 
 
 '''
 Provinsi:
-    field nama tanpa awalan nama jenis. Jadi Jakarta saja tanpa awalan Daerah
+    field nama tanpa awalan nama jenis. Contohnya Jakarta tanpa awalan Daerah
     Khusus Ibukota
 Kabupaten:
     field nama dengan awalan nama jenis karena ada Kabupaten Bogor dan Kota
@@ -108,29 +113,6 @@ Kelurahan:
 '''
 
 
-# Dipakai oleh script lain
-def perbaiki_jenis(db_session, row):
-    row.nama = row.nama.strip()
-    if row.jenis_id <= DEFAULT_KABUPATEN:  # Provinsi / Kabupaten / Kota
-        for prefix in JENIS_WILAYAH:
-            if row.nama.find(prefix) == 0:
-                if row.jenis_id == DEFAULT_PROVINSI:
-                    p = len(prefix) + 1
-                    row.nama = row.nama[p:]
-                row.jenis_id = JENIS_WILAYAH[prefix]
-                return
-    elif row.jenis_id == DEFAULT_DESA:
-        for prefix in KELURAHAN_LIST:
-            if row.key.find(prefix) == 0:
-                row.jenis_id = JENIS_KELURAHAN
-                return
-        kabupaten_key = row.key[:5]
-        q = db_session.query(Wilayah).filter_by(key=kabupaten_key)
-        kabupaten = q.first()
-        if kabupaten.jenis_id > DEFAULT_KABUPATEN:  # Kota ?
-            row.jenis_id = JENIS_KELURAHAN
-
-
 def perbaiki_nama(row):
     if row.key in NAMA:
         row.nama = NAMA[row.key]
@@ -139,7 +121,7 @@ def perbaiki_nama(row):
     row.nama = row.nama.replace('Kep.', 'Kepulauan')
     karakter_aneh = re.findall(REGEX_NAMA, row.nama)
     if karakter_aneh:
-        db_session = registry['target_session']
+        db_session = registry['db_session']
         parent_key = '.'.join(row.key.split('.')[:-1])
         q = db_session.query(Wilayah).filter_by(key=parent_key)
         parent = q.first()
@@ -166,18 +148,6 @@ def perbaiki_nama(row):
     row.nama = ' '.join(kata_list)
 
 
-def perbaiki(db_session, row):
-    perbaiki_jenis(db_session, row)
-    perbaiki_nama(row)
-
-
-def get_count():
-    sql = select(func.count()).select_from(SourceWilayah.__table__)
-    with registry['source_engine'].connect() as conn:
-        q = conn.execute(sql)
-    return q.scalar()
-
-
 def show_progress(begin_time, count, real_count, no, real_no, info):
     duration = time() - begin_time
     speed = duration / real_no
@@ -187,60 +157,70 @@ def show_progress(begin_time, count, real_count, no, real_no, info):
     print(f'#{no}/{count} {info["key"]} {info["nama"]} estimate {estimate}')
 
 
-def get_jenis_id(key):
+def get_parent(db_session, key: str):
+    if len(key) == 2:  # Provinsi
+        return
     t = key.split('.')
-    return len(t) * 10
+    parent_key = '.'.join(t[:-1])
+    q = db_session.query(Wilayah).filter_by(key=parent_key)
+    return q.first()
 
 
-def prepare_new(db_session, key: str):
-    jenis_id = get_jenis_id(key)
-    if jenis_id == 10:  # Provinsi ?
-        parent = None
-    else:
-        t = key.split('.')
-        q = db_session.query(Wilayah).filter_by(key='.'.join(t[:-1]))
-        parent = q.first()
-    return jenis_id, parent
+def mkdir(name: str):
+    if not os.path.exists(name):
+        os.mkdir(name)
 
 
-def restore_from_db(offset=-1):
-    target_session = registry['target_session']
-    source_session = registry['source_session']
-    count = get_count()
-    real_count = count - offset - 1
-    q_source = source_session.query(SourceWilayah)
-    real_no = 0
-    begin_time = time()
-    while True:
-        offset += 1
-        source = q_source.order_by(SourceWilayah.kode).offset(offset).first()
-        if not source:
-            break
-        real_no += 1
-        no = offset + 1
-        nama = source.nama
-        jenis_id, parent = prepare_new(target_session, source.kode)
-        q = target_session.query(Wilayah).filter_by(key=source.kode)
-        target = q.first()
-        if not target:
-            target = Wilayah(key=source.kode)
-        target.nama = nama
-        target.jenis_id = jenis_id
-        if parent:
-            target.wilayah_id = parent.id
-        perbaiki(target_session, target)
-        log_info = dict(key=source.kode, nama=target.nama)
-        with transaction.manager:
-            target.save(target_session)
-        show_progress(begin_time, count, real_count, no, real_no, log_info)
+def restore_from_pdf(pdf):
+    db_session = registry['db_session']
+    mkdir('tmp')
+    filename = os.path.join('data', 'pdf.csv')
+    with open(filename) as f:
+        c = csv.DictReader(f)
+        for row in c:
+            q = db_session.query(Wilayah).filter_by(key=row['provinsi'])
+            if q.first():
+                continue
+            kode_prov = row['provinsi']
+            halaman = row['halaman']
+            pattern = os.path.join('tmp', f'{kode_prov}-*.json')
+            if not glob(pattern):
+                print(f'Pilah kode provinsi {kode_prov} di halaman {halaman}')
+                tables = read_pdf(pdf, pages=halaman, flavor='lattice')
+                output = os.path.join('tmp', f'{kode_prov}.json')
+                tables.export(output, f='json')
+            json_files = glob(pattern)
+            json_files.sort()
+            with transaction.manager:
+                for json_file in json_files:
+                    print(json_file)
+                    with open(json_file) as f:
+                        s = f.read()
+                    rows = json.loads(s)
+                    for row in rows:
+                        d = get_info(row)
+                        if not d:
+                            continue
+                        key = d['kode']
+                        jenis_id = JENIS[d['jenis']]
+                        q = db_session.query(Wilayah).filter_by(key=key)
+                        w = q.first()
+                        if not w:
+                            parent = get_parent(db_session, key)
+                            w = Wilayah(key=d['kode'])
+                            if parent:
+                                w.wilayah_id = parent.id
+                        w.nama = d['nama']
+                        w.jenis_id = jenis_id
+                        perbaiki_nama(w)
+                        w.save(db_session)
+                        print(f'{w.key} {w.nama_lengkap}')
 
 
 def get_option(argv):
-    offset = 0
-    help_offset = f'baris mulai, default {offset}'
     pars = ArgumentParser()
     pars.add_argument('conf')
-    pars.add_argument('--offset', type=int, default=offset, help=help_offset)
+    pars.add_argument('pdf')
     return pars.parse_args(argv)
 
 
@@ -249,21 +229,14 @@ def main(argv=sys.argv[1:]):
     conf = ConfigParser()
     conf.read(option.conf)
     cf = dict(conf.items('main'))
-    if option.offset > 2:
-        offset = option.offset - 2  # Jangan mepet biar keren
-    else:
-        offset = option.offset
-    target_engine, target_session = create_session(cf, 'target.')
-    source_engine, source_session = create_session(cf, 'source.')
-    registry['source_engine'] = source_engine
-    registry['target_session'] = target_session
-    registry['source_session'] = source_session
-    register(target_session)
-    Base.metadata.create_all(target_engine)
+    engine, db_session = create_session(cf, 'sqlalchemy.')
+    registry['db_session'] = db_session
+    register(db_session)
+    Base.metadata.create_all(engine)
     with transaction.manager:
         append_csv(TingkatWilayah, 'tingkat_wilayah.csv', ['nama'])
         append_csv(JenisWilayah, 'jenis_wilayah.csv', ['nama'])
-    restore_from_db(offset)
+    restore_from_pdf(option.pdf)
 
 
 if __name__ == '__main__':

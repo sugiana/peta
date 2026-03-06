@@ -1,4 +1,4 @@
-mysqlclient
+camelot-py
 psycopg2-binary
 zope.sqlalchemy
 geoalchemy2

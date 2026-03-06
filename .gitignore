@@ -5,6 +5,7 @@ __pycache__
 *.html
 *.tgz
 *.json
+*.pdf
 live.ini
 kirim.py
 wiki.json

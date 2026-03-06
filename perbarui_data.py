@@ -23,8 +23,6 @@ from init_db import (
     create_session,
     NAMA,
     humanize_time,
-    prepare_new,
-    perbaiki,
     )
 
 
@@ -243,7 +241,7 @@ def main(argv=sys.argv[1:]):
     conf = ConfigParser()
     conf.read(conf_file)
     cf = dict(conf.items('main'))
-    engine, db_session = create_session(cf, 'target.')
+    engine, db_session = create_session(cf, 'sqlalchemy.')
     register(db_session)
     perbarui_nama(db_session)
     perbarui_data(db_session)
