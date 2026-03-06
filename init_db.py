@@ -1,7 +1,9 @@
 import sys
 import os
 import csv
+import re
 from configparser import ConfigParser
+from argparse import ArgumentParser
 from time import time
 from sqlalchemy import (
     func,
@@ -10,6 +12,10 @@ from sqlalchemy import (
     )
 from zope.sqlalchemy import register
 import transaction
+from roman import (
+    fromRoman,
+    InvalidRomanNumeralError,
+    )
 from models import (
     Base,
     TingkatWilayah,
@@ -17,11 +23,16 @@ from models import (
     Wilayah,
     )
 from source_models import Wilayah as SourceWilayah
-from common import create_session
+from common import (
+    create_session,
+    format_wilayah,
+    )
 
 
 registry = dict()
 
+REGEX_NAMA = r"[^a-zA-Z0-9'\-\ ]"
+KUTIP_TUNGGAL = chr(8217)
 JENIS_WILAYAH = {
     'Daerah Khusus Ibukota': 11,
     'Daerah Istimewa': 12,
@@ -29,7 +40,6 @@ JENIS_WILAYAH = {
     'Kota': 21,
     'Kota Administrasi': 21,
     }
-
 DEFAULT_PROVINSI = 10
 DEFAULT_KABUPATEN = 20
 DEFAULT_DESA = 40
@@ -41,6 +51,13 @@ with open(filename) as f:
     c = csv.DictReader(f)
     for row in c:
         KELURAHAN_LIST.append(row['key'])
+
+NAMA = dict()
+filename = os.path.join('data', 'nama.csv')
+with open(filename) as f:
+    c = csv.DictReader(f)
+    for row in c:
+        NAMA[row['key']] = row['nama']
 
 
 def humanize_time(secs):
@@ -91,7 +108,8 @@ Kelurahan:
 '''
 
 
-def repair_row(row):
+# Dipakai oleh script lain
+def perbaiki_jenis(db_session, row):
     row.nama = row.nama.strip()
     if row.jenis_id <= DEFAULT_KABUPATEN:  # Provinsi / Kabupaten / Kota
         for prefix in JENIS_WILAYAH:
@@ -106,12 +124,51 @@ def repair_row(row):
             if row.key.find(prefix) == 0:
                 row.jenis_id = JENIS_KELURAHAN
                 return
-        target_session = registry['target_session']
         kabupaten_key = row.key[:5]
-        q = target_session.query(Wilayah).filter_by(key=kabupaten_key)
+        q = db_session.query(Wilayah).filter_by(key=kabupaten_key)
         kabupaten = q.first()
         if kabupaten.jenis_id > DEFAULT_KABUPATEN:  # Kota ?
             row.jenis_id = JENIS_KELURAHAN
+
+
+def perbaiki_nama(row):
+    if row.key in NAMA:
+        row.nama = NAMA[row.key]
+        return
+    row.nama = row.nama.replace(KUTIP_TUNGGAL, "'")
+    row.nama = row.nama.replace('Kep.', 'Kepulauan')
+    karakter_aneh = re.findall(REGEX_NAMA, row.nama)
+    if karakter_aneh:
+        db_session = registry['target_session']
+        parent_key = '.'.join(row.key.split('.')[:-1])
+        q = db_session.query(Wilayah).filter_by(key=parent_key)
+        parent = q.first()
+        # Agar mudah copas ke mesin pencari
+        kecamatan = parent.nama_lengkap.split(',')[0]
+        print(f'Key:{row.key}; Cari:wiki {row.nama.title()}, {kecamatan}')
+        # Agar mudah copas ke data/nama.csv
+        print('Salin ke data/nama.csv untuk diperbaiki:')
+        print(f'{row.key},{row.nama.title()}')
+        raise Exception(
+            f'{row.key},{row.nama.title()}, {parent.nama_lengkap} '
+            'ada karakter aneh')
+    row.nama = format_wilayah(row.nama)
+    kata_list = []
+    for kata in row.nama.split():
+        if 1 < len(kata) < 5:
+            try:
+                fromRoman(kata)
+                kata_list.append(kata.upper())
+                continue
+            except InvalidRomanNumeralError:
+                pass
+        kata_list.append(kata.capitalize())
+    row.nama = ' '.join(kata_list)
+
+
+def perbaiki(db_session, row):
+    perbaiki_jenis(db_session, row)
+    perbaiki_nama(row)
 
 
 def get_count():
@@ -121,26 +178,37 @@ def get_count():
     return q.scalar()
 
 
-def show_progress(begin_time, count, real_count, no, real_no, source):
+def show_progress(begin_time, count, real_count, no, real_no, info):
     duration = time() - begin_time
     speed = duration / real_no
     remain_row = real_count - real_no
     finish_estimate = remain_row * speed
     estimate = humanize_time(finish_estimate)
-    print(f'#{no}/{count} {source.kode} {source.nama} estimate {estimate}')
+    print(f'#{no}/{count} {info["key"]} {info["nama"]} estimate {estimate}')
 
 
-def restore_from_source():
+def get_jenis_id(key):
+    t = key.split('.')
+    return len(t) * 10
+
+
+def prepare_new(db_session, key: str):
+    jenis_id = get_jenis_id(key)
+    if jenis_id == 10:  # Provinsi ?
+        parent = None
+    else:
+        t = key.split('.')
+        q = db_session.query(Wilayah).filter_by(key='.'.join(t[:-1]))
+        parent = q.first()
+    return jenis_id, parent
+
+
+def restore_from_db(offset=-1):
     target_session = registry['target_session']
     source_session = registry['source_session']
     count = get_count()
+    real_count = count - offset - 1
     q_source = source_session.query(SourceWilayah)
-    if sys.argv[2:]:
-        offset = int(sys.argv[2]) - 2
-        real_count = count - offset - 1
-    else:
-        offset = -1
-        real_count = count
     real_no = 0
     begin_time = time()
     while True:
@@ -151,32 +219,40 @@ def restore_from_source():
         real_no += 1
         no = offset + 1
         nama = source.nama
-        t = source.kode.split('.')
-        jenis_id = len(t) * 10
-        if jenis_id == 10:
-            parent = None
-        else:
-            q = target_session.query(Wilayah).filter_by(key='.'.join(t[:-1]))
-            parent = q.first()
+        jenis_id, parent = prepare_new(target_session, source.kode)
         q = target_session.query(Wilayah).filter_by(key=source.kode)
-        row = q.first()
+        target = q.first()
+        if not target:
+            target = Wilayah(key=source.kode)
+        target.nama = nama
+        target.jenis_id = jenis_id
+        if parent:
+            target.wilayah_id = parent.id
+        perbaiki(target_session, target)
+        log_info = dict(key=source.kode, nama=target.nama)
         with transaction.manager:
-            if not row:
-                row = Wilayah(key=source.kode)
-            row.nama = nama
-            row.jenis_id = jenis_id
-            if parent:
-                row.wilayah_id = parent.id
-            repair_row(row)
-            row.save(target_session)
-        show_progress(begin_time, count, real_count, no, real_no, source)
+            target.save(target_session)
+        show_progress(begin_time, count, real_count, no, real_no, log_info)
+
+
+def get_option(argv):
+    offset = 0
+    help_offset = f'baris mulai, default {offset}'
+    pars = ArgumentParser()
+    pars.add_argument('conf')
+    pars.add_argument('--offset', type=int, default=offset, help=help_offset)
+    return pars.parse_args(argv)
 
 
 def main(argv=sys.argv[1:]):
-    conf_file = argv[0]
+    option = get_option(argv)
     conf = ConfigParser()
-    conf.read(conf_file)
+    conf.read(option.conf)
     cf = dict(conf.items('main'))
+    if option.offset > 2:
+        offset = option.offset - 2  # Jangan mepet biar keren
+    else:
+        offset = option.offset
     target_engine, target_session = create_session(cf, 'target.')
     source_engine, source_session = create_session(cf, 'source.')
     registry['source_engine'] = source_engine
@@ -187,7 +263,7 @@ def main(argv=sys.argv[1:]):
     with transaction.manager:
         append_csv(TingkatWilayah, 'tingkat_wilayah.csv', ['nama'])
         append_csv(JenisWilayah, 'jenis_wilayah.csv', ['nama'])
-    restore_from_source()
+    restore_from_db(offset)
 
 
 if __name__ == '__main__':

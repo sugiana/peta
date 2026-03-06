@@ -4,9 +4,11 @@ __pycache__
 *.geojson
 *.html
 *.tgz
-kirim.py
+*.json
 live.ini
+kirim.py
 wiki.json
 kabupaten.csv
 kecamatan.csv
 kelurahan.csv
+chrome-profile

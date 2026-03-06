@@ -7,7 +7,7 @@ from common import create_session
 from init_db import (
     registry,
     create_session,
-    repair_row,
+    perbaiki_jenis,
     KELURAHAN_LIST,
     )
 
@@ -17,26 +17,25 @@ def main(argv=sys.argv[1:]):
     conf = ConfigParser()
     conf.read(conf_file)
     cf = dict(conf.items('main'))
-    target_engine, target_session = create_session(cf, 'target.')
-    registry['target_session'] = target_session
-    register(target_session)
+    _, db_session = create_session(cf, 'target.')
+    register(db_session)
     keys = []
     for key in KELURAHAN_LIST:
-        q = target_session.query(Wilayah).filter_by(key=key)
+        q = db_session.query(Wilayah).filter_by(key=key)
         row = q.first()
         if row.tingkat_id == 3:  # Kecamatan ?
-            q = target_session.query(Wilayah).filter_by(wilayah_id=row.id)
+            q = db_session.query(Wilayah).filter_by(wilayah_id=row.id)
             for desa in q:
                 keys.append(desa.key)
         else:
             keys.append(key)
     with transaction.manager:
         for key in keys:
-            q = target_session.query(Wilayah).filter_by(key=key)
+            q = db_session.query(Wilayah).filter_by(key=key)
             row = q.first()
             old_name = row.nama_lengkap
-            repair_row(row)
-            row.save(target_session)
+            perbaiki_jenis(db_session, row)
+            row.save(db_session)
             new_name = row.nama_lengkap
             if old_name != new_name:
                 print(f'{old_name} -> {new_name}')

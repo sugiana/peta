@@ -53,34 +53,17 @@ Buat salinan file konfigurasi::
 
     cp wilayah.ini live.ini
 
-Sesuaikan ``live.ini``. Jalankan penyalinan::
+Sesuaikan ``live.ini``. Jalankan penyalinan kode dan nama::
 
     ~/env/bin/python init_db.py live.ini
 
-Selanjutnya menyimpan multi polygon desa di field ``batas``::
-
-    wget http://warga.web.id/files/indonesia/provinces.geojson.tgz
-    mkdir desa
-    tar xfvz provinces.geojson.tgz -C desa/
-    ~/env/bin/python geojson_to_db.py live.ini
-
-Untuk tingkatan wilayah di atasnya diperlukan SQL function::
+Lalu menyimpan batas wilayah dan statistik desa dari Dukcapil::
 
     psql indonesia -f sql/func_gabung.sql
+    ~/env/bin/python perbarui_data live.ini
 
-Kecamatan adalah gabungan kelurahan, dia adalah daerah tingkat 3::
-
-    psql indonesia -c "SELECT gabung(3)"
-
-Lanjut kabupaten::
-
-    psql indonesia -c "SELECT gabung(2)"
-
-Terakhir provinsi::
-
-    psql indonesia -c "SELECT gabung(1)"
-
-Ketiganya ada di file ``sql/gabung.sql``.
+Ini ada proses unduh dari ``https://gis.dukcapil.kemendagri.go.id/peta`` untuk
+setiap kecamatan. Butuh waktu sekitar tiga jam. Nanti akan tampak perkiraannya. 
 
 
 Desa menjadi Kelurahan
@@ -217,7 +200,7 @@ diperlukan web browser Google Chrome. Lalu pasang pasang paket yang dibutuhkan::
 
 Mulai unduh Jakarta misalnya::
 
-    ~/env/bin/python download_province.py 31
+    ~/env/bin/python petanusa.py 31
 
 ``31`` adalah kode Provinsi Jakarta. Daftarnya bisa lihat di ``data/provinsi.csv``.
 
@@ -226,6 +209,50 @@ Atau tanpa menyebutkan kode provinsi untuk mengunduh semua provinsi.
 Kemudian jalankan lagi penyimpanan ke database::
 
     ~/env/bin/python geojson_to_db.py live.ini
+
+
+Desa Lalemo
+-----------
+
+Ini adalah perjalanan bagaimana *repository* ini dibuat.
+
+Kita berangkat dari `CahyaDSN <https://github.com/cahyadsn/wilayah>`_ dengan
+`wilayah.sql <https://github.com/cahyadsn/wilayah/blob/master/db/wilayah.sql>`_
+yang bersumber dari keputusan
+`Menteri Dalam Negeri 25 April 2025 <https://jdih.kemendagri.go.id/dokumen/view?id=1937>`_.
+Silakan `unduh lampirannya <https://drive.google.com/file/d/1o_m621D00TtwCwQMLn8XUnV3nolamPDm/view>`_.
+
+Tidak ada data **statistik desa** di dalamnya sehingga perlu diunduh dari web GIS
+Dukcapil oleh ``perbaiki_data.py``. Data yang dimaksud contohnya jumlah
+penduduk, jumlah pria, jumlah wanita, dst.
+
+Untuk menghemat waktu *web request* maka diputuskan mengambil data per
+kecamatan yang nantinya tampil seluruh desanya. Di sini masalah mulai muncul,
+ia berhenti dengan pesan kesalahan berikut:: 
+
+    72.06.06.2018 Desa LALEMO, BUNGKU SELATAN, KAB. MOROWALI, SULAWESI TENGAH belum terdaftar.
+
+Untuk memastikannya maka dicarilah kata ``Lalemo`` di PDF Menteri 2025 itu.
+Dengan menekan Ctrl F di PDF viewer dan mengetikkan apa yang mau dicari
+akhirnya ditemukan di kode kecamatan ``72.06.06`` **tapi tidak ada kode desa**.
+Di atasnya ada kode desa, tapi di bawahnya ada 22 desa lagi yang tak berkode.
+
+Karena penasaran maka dicarilah di CahyaDSN direktori
+`archive <https://github.com/cahyadsn/wilayah/tree/master/db/archive>`_::
+
+    grep -i lalemo *.sql
+
+hasilnya::
+
+    wilayah_2016.sql:("72.06.06.2018","Lalemo"),
+    wilayah_2018.sql:('72.06.06.2018','Lalemo'),
+    wilayah_2020.sql:('72.06.06.2018', 'Lalemo'),
+    wilayah_2022.sql:('72.06.06.2018','Lalemo'),
+    wilayah_2023.sql:('72.06.06.2018','Lalemo'),
+
+Ternyata sudah lama ada.
+
+CahyaDSN memberikan pilihan, *repo* ini telah memilih.
 
 
 Referensi

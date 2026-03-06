@@ -13,19 +13,10 @@ def to_html(filename):
     html = html.replace('{geojson_file}', geojson_file)
     html = html.replace('{lat}', str(lat))
     html = html.replace('{lon}', str(lon))
-    html = html.replace('{title}', title)
-    html_file = prefix + '.html'
-    with open(html_file, 'w') as f:
-        f.write(html)
-    print(f'File {html_file} sudah dibuat.')
+    return html.replace('{title}', title)
 
 
 if __name__ == '__main__':
     import sys
-    from glob import glob
-    if sys.argv[1:]:
-        filenames = sys.argv[1:]
-    else:
-        filenames = glob('*.geojson')
-    for filename in filenames:
-        to_html(filename)
+    filename = sys.argv[1]
+    print(to_html(filename))

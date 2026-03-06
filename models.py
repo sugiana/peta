@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     )
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.dialects.postgresql import JSONB
 from geoalchemy2 import Geometry
 
 
@@ -38,6 +39,7 @@ class Wilayah(Base):
             Integer, ForeignKey(TingkatWilayah.id), nullable=False)
     nama_lengkap = Column(String(256), nullable=False)
     batas = Column(Geometry('GEOMETRY'))
+    data = Column(JSONB)
 
     def save(self, db_session):
         q = db_session.query(JenisWilayah).filter_by(id=self.jenis_id)
